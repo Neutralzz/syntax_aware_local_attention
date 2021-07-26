@@ -1,11 +1,9 @@
 import sys, os, time
 import argparse
-from ltp import LTP
 import re, csv
 import pickle
 import numpy as np
 from transformers import BertTokenizer
-from ltp import LTP
 import spacy
 from spacy.tokens import Token
 from spacy.tokenizer import Tokenizer
@@ -13,15 +11,13 @@ import task_utils
 from tqdm import tqdm
 import copy
 
-global spacy_parser, ltp, tokenizer
+global spacy_parser, tokenizer
 Token.set_extension('tid', default=0)
-spacy_parser = spacy.load("en_core_web_sm", disable=['ner', 'tagger'])
+spacy_parser = spacy.load("en_core_web_sm", disable=['ner'])
 spacy_parser.tokenizer = Tokenizer(spacy_parser.vocab)
-ltp = LTP()
 tokenizer = {
     'en-cased': BertTokenizer.from_pretrained('bert-base-cased'),
     'en-uncased': BertTokenizer.from_pretrained('bert-base-uncased'),
-    'zh': BertTokenizer.from_pretrained('bert-base-chinese'),
 }
 
 class InputRawExample(object):
@@ -35,7 +31,7 @@ class Graph(object):
         super(Graph, self).__init__()
         self.n = n
         self.link_list = []
-        self.dis = [1000] * self.n
+        self.vis = [0] * self.n
         for i in range(self.n):
             self.link_list.append([])
 
@@ -45,106 +41,32 @@ class Graph(object):
         self.link_list[u].append(v)
         self.link_list[v].append(u)
 
-    def bfs(self, start):
+    def bfs(self, start, dist):
         que = [start]
-        self.dis[start] = 0
-        for d in range(1, 20):
-            if len(que) == 0:
-                return
+        self.vis[start] = 1
+        for _ in range(dist):
             que2 = []
             for u in que:
+                #self.vis[u] = 1
                 for v in self.link_list[u]:
-                    if self.dis[v] <= d:
+                    if self.vis[v]:
                         continue
                     que2.append(v)
-                    self.dis[v] = d
+                    self.vis[v] = 1
             que = copy.deepcopy(que2)
             
-    def solve(self, start):
-        self.dis = [1000] * self.n
-        self.bfs(start)
-        self.dis[0] = 0
-        return copy.deepcopy(self.dis)
+
+    def solve(self, start, dist):
+        self.vis = [0] * self.n
+        self.bfs(start, dist)
+        self.vis[0] = 1
+        return copy.deepcopy(self.vis)
 
 def process(args, text, label):
     # text: str
     # label: list[str] or int
-    global ltp, spacy_parser, tokenizer
-    if args.lang == 'zh':
-        local_tokenizer = tokenizer['zh']
-        tokens, hidden = ltp.seg([text])
-        tokens = tokens[0]
-
-        res = ltp.sdp(hidden, graph=True)[0]
-
-        tokens = ['[CLS]'] + tokens
-        G = Graph(len(tokens))
-
-        for u,v,_ in res:
-            if u == 0 or v == 0:
-                continue
-            G.add_edge(u,v)
-
-        ntokens = []
-        ws = []
-
-        for token in tokens:
-            token = token.replace(' ', '')  
-            if token == '[CLS]':
-                ntokens.append(token)
-                ws.append(1)
-            else:
-                token = token.lower()
-                ws.append(len(token))
-                for char in token:
-                    ntokens.append(char)
-        dep_dist_matrix = []
-        for i, token in enumerate(tokens):
-            dis = G.solve(i)
-            
-            if i-1>=0:
-                vis_tmp = G.solve(i-1)
-                for j in range(len(vis_tmp)):
-                    dis[j] = min(dis[j], vis_tmp[j])
-
-            if i+1<len(tokens):
-                vis_tmp = G.solve(i+1)
-                for j in range(len(vis_tmp)):
-                    dis[j] = min(dis[j], vis_tmp[j])
-            
-            dist_vec = []
-            for j in range(len(dis)):
-                for k in range(ws[j]):
-                    dist_vec.append(dis[j])
-
-            assert len(ntokens) == len(dist_vec), ntokens
-            dist_vec.append(0)
-
-            for k in range(ws[i]):
-                dep_dist_matrix.append(dist_vec)
-
-        ntokens.append('[SEP]')
-        if isinstance(label, list):
-            assert len(text) == len(label)
-            labels = ['O'] + label + ['O']
-            assert len(labels) == len(ntokens)
-            label_s2i = {}
-            for i, s in enumerate(task_utils.task_processors[args.task]().get_labels()):
-                label_s2i[s] = i
-            labels = [label_s2i[s] for s in labels]
-            loss_mask = [1] * len(labels)
-            loss_mask[0] = 0
-            loss_mask[-1] = 0
-        else:
-            labels = [label]
-
-        dep_dist_matrix.append([0] * len(ntokens))
-        for j in range(len(dep_dist_matrix[0])):
-            dep_dist_matrix[0][j] = 0
-
-        input_ids = local_tokenizer.convert_tokens_to_ids(ntokens)
-
-    else:
+    global spacy_parser, tokenizer
+    if args.lang == 'en':
         local_tokenizer = tokenizer['en-uncased'] if args.do_lower_case else tokenizer['en-cased']
 
         while '  ' in text:
@@ -176,30 +98,30 @@ def process(args, text, label):
                 for j, st in enumerate(sub_tokens):
                     ntokens.append(st)
 
-        dep_dist_matrix = []
+        dep_att_mask = []
         for i, token in enumerate(tokens):
-            dis = G.solve(i)
+            vis = G.solve(i, args.dist)
             
             if i-1>=0:
-                vis_tmp = G.solve(i-1)
+                vis_tmp = G.solve(i-1, args.dist)
                 for j in range(len(vis_tmp)):
-                    dis[j] = min(dis[j], vis_tmp[j])
+                    vis[j] |= vis_tmp[j]
 
             if i+1<len(tokens):
-                vis_tmp = G.solve(i+1)
+                vis_tmp = G.solve(i+1, args.dist)
                 for j in range(len(vis_tmp)):
-                    dis[j] = min(dis[j], vis_tmp[j])
+                    vis[j] |= vis_tmp[j]
             
-            dist_vec = []
-            for j in range(len(dis)):
+            mask = []
+            for j in range(len(vis)):
                 for k in range(ws[j]):
-                    dist_vec.append(dis[j])
+                    mask.append(vis[j])
 
-            assert len(ntokens) == len(dist_vec), ntokens
-            dist_vec.append(0)
+            assert len(ntokens) == len(mask), ntokens
+            mask.append(1)
 
             for k in range(ws[i]):
-                dep_dist_matrix.append(dist_vec)
+                dep_att_mask.append(mask)
 
         ntokens.append('[SEP]')
         if isinstance(label, list):
@@ -222,9 +144,9 @@ def process(args, text, label):
         else:
             labels = [label]
 
-        dep_dist_matrix.append([0] * len(ntokens))
-        for j in range(len(dep_dist_matrix[0])):
-            dep_dist_matrix[0][j] = 0
+        dep_att_mask.append([1] * len(ntokens))
+        for j in range(len(dep_att_mask[0])):
+            dep_att_mask[0][j] = 1
 
         quote_idx = []
         for i, w in enumerate(ntokens):
@@ -234,13 +156,15 @@ def process(args, text, label):
 
         for i in range(len(ntokens)):
             for j in quote_idx:
-                dep_dist_matrix[i][j] = 0
+                dep_att_mask[i][j] = 1
         
         input_ids = local_tokenizer.convert_tokens_to_ids(ntokens)
+    else:
+        raise KeyError(args.lang)
 
     example = {
         'input_ids': input_ids,
-        'dep_dist_matrix': dep_dist_matrix,
+        'dep_att_mask': dep_att_mask,
         'labels': labels,
     }
     if isinstance(label, list):
@@ -306,7 +230,7 @@ def main(args):
         examples.append(process(args, item.text, item.label))
 
     filename = args.data_file.split('/')[-1]
-    pickle.dump(examples, open('./%s.%s.pkl'%(args.task, filename), 'wb'))
+    pickle.dump(examples, open('./%s.%s.d%d.pkl'%(args.task, filename, args.dist), 'wb'))
 
 
 if __name__=='__main__':
@@ -315,5 +239,6 @@ if __name__=='__main__':
     p.add_argument("--data_file", default="cola.tsv", type=str)
     p.add_argument("--lang", default="en", type=str)
     p.add_argument("--do_lower_case", action="store_true")
+    p.add_argument("--dist", default=3, type=int)
     args = p.parse_args()
     main(args)

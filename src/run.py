@@ -73,34 +73,34 @@ class DataProcessor(threading.Thread):
         #for example in examples:
 
         batch = {}
-        for key in ['input_ids', 'attention_mask', 'dep_dist_matrix', 'labels']:
+        for key in ['input_ids', 'attention_mask', 'dep_att_mask', 'labels']:
             batch[key] = []
 
         if len(examples[0]['labels']) > 1:
             batch['loss_mask'] = []
-        # example : input_ids, dep_dist_matrix
+        # example : input_ids, dep_att_mask
         # labels [list]
         # labels [int]
         for example in examples:
             input_ids = example['input_ids'][:max_length]
-            dep_dist_matrix = example['dep_dist_matrix'][:max_length]
+            dep_att_mask = example['dep_att_mask'][:max_length]
             seq_length = len(input_ids)
 
-            assert seq_length == len(dep_dist_matrix)
+            assert seq_length == len(dep_att_mask)
 
             padding_length = max_length - seq_length
             batch['input_ids'].append(input_ids + ([0] * padding_length))
             batch['attention_mask'].append(([1] * seq_length) + ([0] * padding_length))
 
             for i in range(seq_length):
-                dep_dist_matrix[i] = dep_dist_matrix[i][:max_length]
+                dep_att_mask[i] = dep_att_mask[i][:max_length]
                 if padding_length > 0:
-                    dep_dist_matrix[i] = dep_dist_matrix[i] + ([0] * padding_length)
+                    dep_att_mask[i] = dep_att_mask[i] + ([0] * padding_length)
                 
             for i in range(padding_length):
-                dep_dist_matrix.append([0] * max_length)
+                dep_att_mask.append([0] * max_length)
             
-            batch['dep_dist_matrix'].append(dep_dist_matrix)
+            batch['dep_att_mask'].append(dep_att_mask)
 
             if len(example['labels']) > 1:
                 labels = example['labels'][:max_length] + ([0] * padding_length)
@@ -111,7 +111,7 @@ class DataProcessor(threading.Thread):
                 batch['labels'].append(example['labels'][0])
 
         for key in batch:
-            if key != 'dep_dist_matrix':
+            if key != 'dep_att_mask':
                 batch[key] = torch.tensor(batch[key], dtype=torch.long)
             else:
                 batch[key] = torch.tensor(batch[key], dtype=torch.float)
@@ -318,7 +318,6 @@ if __name__=='__main__':
     parser.add_argument("--max_seq_length", default=128, type=int,
                         help="The maximum total input sequence length after tokenization. Sequences longer "
                              "than this will be truncated, sequences shorter will be padded.")
-    parser.add_argument("--scale_func", default='tanh', type=str)
 
     parser.add_argument("--train_file", default="train.pkl", type=str)
     parser.add_argument("--dev_file", default="dev.pkl", type=str)
@@ -393,7 +392,7 @@ if __name__=='__main__':
         torch.distributed.init_process_group(backend='nccl')
         args.n_gpu = 1
     args.device = device
-    args.to_gpu_keys = ['input_ids', 'attention_mask', 'dep_dist_matrix', 'labels', 'loss_mask']
+    args.to_gpu_keys = ['input_ids', 'attention_mask', 'dep_att_mask', 'labels', 'loss_mask']
     
     # Setup logging
     logging.basicConfig(format = '%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
@@ -407,9 +406,10 @@ if __name__=='__main__':
     args.model_type = args.model_type.lower()
     config_class, model_class, tokenizer_class = MODEL_CLASSES[args.model_type]
     config = config_class.from_pretrained(args.config_name if args.config_name else args.model_name_or_path,
+                                          selection_mode='soft',
                                           num_labels=task_utils.num_labels[args.task],
-                                          scale_func=args.scale_func,
-                                          cache_dir=args.cache_dir if args.cache_dir else None)
+                                          cache_dir=args.cache_dir if args.cache_dir else None,
+                                          output_selections=False)
     tokenizer = tokenizer_class.from_pretrained(args.tokenizer_name if args.tokenizer_name else args.model_name_or_path,
                                                 do_lower_case=args.do_lower_case,
                                                 cache_dir=args.cache_dir if args.cache_dir else None)

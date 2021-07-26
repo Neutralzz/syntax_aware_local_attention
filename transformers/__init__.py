@@ -45,10 +45,7 @@ from .configuration_bert import BertConfig, BERT_PRETRAINED_CONFIG_ARCHIVE_MAP
 if is_torch_available():
     from .modeling_utils import (PreTrainedModel, prune_layer, Conv1D)
 
-    from .modeling_bert import (BertPreTrainedModel, BertModel, BertForPreTraining,
-                                BertForMaskedLM, BertForNextSentencePrediction,
-                                BertForSequenceClassification, BertForMultipleChoice,
-                                BertForTokenClassification, BertForQuestionAnswering,
+    from .modeling_bert import (BertModel,
                                 load_tf_weights_in_bert, BERT_PRETRAINED_MODEL_ARCHIVE_MAP)
 
     # Optimization

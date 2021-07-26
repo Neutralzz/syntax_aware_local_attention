@@ -20,27 +20,21 @@ class TokenClsModel(BertPreTrainedModel):
         self.classifier = nn.Linear(config.hidden_size, config.num_labels)
 
         self.init_weights()
-        self.set_reg_weights()
 
     @staticmethod
     def build_batch(batch, tokenizer):
         return batch
 
-    def set_reg_weights(self):
-        for scale_module in self.bert.encoder.scale_layer:
-            scale_module.reg.weight.data.zero_()
-            scale_module.reg.bias.data.fill_(5.0)
-
     def forward(self, batch):
         input_ids = batch['input_ids']
         attention_mask = batch['attention_mask']
-        dep_dist_matrix = batch['dep_dist_matrix']
+        dep_att_mask = batch['dep_att_mask']
         labels = batch['labels']
         loss_mask = batch['loss_mask'] if 'loss_mask' in batch else None
 
         outputs = self.bert(input_ids,
                             attention_mask=attention_mask,
-                            dep_dist_matrix=dep_dist_matrix)
+                            dep_att_mask=dep_att_mask)
 
         sequence_output = outputs[0]
 
@@ -71,26 +65,20 @@ class SentClsModel(BertPreTrainedModel):
         self.classifier = nn.Linear(config.hidden_size, config.num_labels)
 
         self.init_weights()
-        self.set_reg_weights()
 
     @staticmethod
     def build_batch(batch, tokenizer):
         return batch
 
-    def set_reg_weights(self):
-        for scale_module in self.bert.encoder.scale_layer:
-            scale_module.reg.weight.data.zero_()
-            scale_module.reg.bias.data.fill_(5.0)
-
     def forward(self, batch):
         input_ids = batch['input_ids']
         attention_mask = batch['attention_mask']
-        dep_dist_matrix = batch['dep_dist_matrix']
+        dep_att_mask = batch['dep_att_mask']
         labels = batch['labels']
 
         outputs = self.bert(input_ids,
                             attention_mask=attention_mask,
-                            dep_dist_matrix=dep_dist_matrix)
+                            dep_att_mask=dep_att_mask)
         pooled_output = outputs[1]
         pooled_output = self.dropout(pooled_output)
         logits = self.classifier(pooled_output)
